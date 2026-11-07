@@ -1,0 +1,54 @@
+# Voorbeeld: Foodsoft 5 voor meerdere coops, elk met een eigen database.
+# Zet geheimen in een .env-bestand naast dit bestand (zie LEESMIJ).
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_USER: foodsoft
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - db:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  web: &foodsoft
+    image: foodcoops/foodsoft:${FOODSOFT_VERSION:-latest}
+    restart: unless-stopped
+    command: ./proc-start web
+    depends_on: [db, redis]
+    ports:
+      - "127.0.0.1:3000:3000"      # achter een reverse proxy met https (Caddy/nginx)
+    environment: &env
+      RAILS_ENV: production
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      DATABASE_URL: mysql2://foodsoft:${DB_PASSWORD}@db/foodsoft_${DEFAULT_COOP:-fcadam}?encoding=utf8mb4
+      REDIS_URL: redis://redis:6379
+      # Laat Foodsoft zelf de coops zoeken: elke database die met foodsoft_ begint.
+      FOODSOFT_DB_PREFIX: foodsoft_
+      FOODSOFT_DB_HOST: db
+      FOODSOFT_DB_NAME: foodsoft_${DEFAULT_COOP:-fcadam}
+      FOODSOFT_DB_USER: foodsoft
+      FOODSOFT_DB_PASSWORD: ${DB_PASSWORD}
+      SMTP_ADDRESS: ${SMTP_ADDRESS:-}
+      SMTP_USER_NAME: ${SMTP_USER_NAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    volumes:
+      - ./app_config.defaults.yml:/usr/src/app/app_config.defaults.yml:ro
+
+  worker:
+    <<: *foodsoft
+    command: ./proc-start worker
+    ports: []
+
+  cron:
+    <<: *foodsoft
+    command: ./proc-start cron
+    ports: []
+
+volumes:
+  db:

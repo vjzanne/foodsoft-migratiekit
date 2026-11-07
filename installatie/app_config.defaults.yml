@@ -1,0 +1,20 @@
+# Instellingen die voor alle coops gelden. Foodsoft voegt bij het starten zelf
+# per coop een blok toe (met database foodsoft_<coop>), voor elke database die
+# met FOODSOFT_DB_PREFIX begint. Per coop kun je daarna in Foodsoft zelf
+# (Beheer > Instellingen) naam, contact enzovoort aanpassen.
+default: &defaults
+  multi_coop_install: true
+  default_scope: fcadam          # coop die je ziet op de kale URL
+  name: Voedselcollectief
+  contact:
+    email: info@voedselcollectief.org
+  homepage: https://voedselcollectief.org
+  currency_unit: €
+  time_zone: Amsterdam
+  default_locale: nl
+  ignore_browser_locale: true
+  tax_default: 9.0
+  use_nick: false
+
+production:
+  <<: *defaults

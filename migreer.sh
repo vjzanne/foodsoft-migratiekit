@@ -37,6 +37,13 @@ log "Dump inlezen in database 'bron'"
 sql -e 'CREATE DATABASE bron'
 sql bron < "$DUMP"
 
+# Zonder multishared bestaat de kolom scope misschien niet: dan tijdelijk toevoegen (één coop).
+for T in groups suppliers orders invites tasks messages article_categories; do
+  if [ "$(sql -N bron -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='bron' AND table_name='$T' AND column_name='scope'")" = 0 ]; then
+    sql bron -e "ALTER TABLE \`$T\` ADD COLUMN scope varchar(255) NULL"
+  fi
+done
+
 log "Analyse -> $UIT/analyse.txt"
 sql -t bron < "$KIT/sql/analyse.sql" > "$UIT/analyse.txt"
 cat "$UIT/analyse.txt"
@@ -52,20 +59,24 @@ fi
 
 mapfile -t SCOPES < <(sql -N bron -e "SELECT DISTINCT IFNULL(scope,'') FROM groups")
 for S in "${SCOPES[@]}"; do
-  NAAM=${S:-$LEGE_SCOPE}; DBN="foodsoft_${NAAM//[^a-zA-Z0-9_]/_}"
+  NAAM=${S:-$LEGE_SCOPE}; DBN="foodsoft_${NAAM//[^a-zA-Z0-9_-]/_}"   # zelfde naam als Foodsoft 5 verwacht
   if [ -z "$S" ]; then SCOPE_SQL="SET @scope = NULL;"; else SCOPE_SQL="SET @scope = '${S//\'/}';"; fi
   log "Coop '$NAAM' -> database $DBN"
 
-  sql -e "DROP DATABASE IF EXISTS $DBN; CREATE DATABASE $DBN"
+  sql -e "DROP DATABASE IF EXISTS \`$DBN\`; CREATE DATABASE \`$DBN\`"
   docker exec "$DB" sh -c "mariadb-dump -uroot -p$PW --single-transaction bron | mariadb -uroot -p$PW $DBN"
   { echo "$SCOPE_SQL"; cat "$KIT/sql/splits.sql"; } | sql "$DBN"
 
   { echo "$SCOPE_SQL"; cat "$KIT/sql/saldi.sql"; } | sql -t bron > "$UIT/saldi-$NAAM-voor.txt"
 
+  # Foodsoft 5 gebruikt geen scope-kolommen meer: weghalen.
+  sql -N -e "SELECT CONCAT('ALTER TABLE \`',table_name,'\` DROP COLUMN scope;') FROM information_schema.columns
+             WHERE table_schema='$DBN' AND column_name='scope'" | sql "$DBN"
+
   log "  tekenset naar utf8mb4"
   sql -N -e "SELECT CONCAT('ALTER TABLE \`',table_name,'\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;')
              FROM information_schema.tables WHERE table_schema='$DBN' AND table_type='BASE TABLE'" | sql "$DBN"
-  sql -e "ALTER DATABASE $DBN CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+  sql -e "ALTER DATABASE \`$DBN\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
 
   log "  botsingen met de fork oplossen"
   sql "$DBN" < "$KIT/sql/voor-migratie.sql" | tee "$UIT/voor-migratie-$NAAM.txt"
@@ -77,7 +88,7 @@ for S in "${SCOPES[@]}"; do
     --entrypoint sh "$FOODSOFT_IMAGE" -c 'bin/rails db:migrate' \
     > "$UIT/migratie-$NAAM.log" 2>&1 || { grep -v '^\s*from ' "$UIT/migratie-$NAAM.log" | tail -15; echo "STOP: migratie mislukt, zie $UIT/migratie-$NAAM.log"; exit 1; }
 
-  echo "SET @scope = NULL;" | cat - "$KIT/sql/saldi.sql" | sql -t "$DBN" > "$UIT/saldi-$NAAM-na.txt"
+  grep -v 'g.scope' "$KIT/sql/saldi.sql" | sql -t "$DBN" > "$UIT/saldi-$NAAM-na.txt"
   if diff -q "$UIT/saldi-$NAAM-voor.txt" "$UIT/saldi-$NAAM-na.txt" >/dev/null; then
     log "  saldi, leden en bestellingen per groep: gelijk"
   else
