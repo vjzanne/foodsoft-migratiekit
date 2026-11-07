@@ -1,0 +1,4 @@
+uitvoer/
+*.sql.gz
+dump*.sql
+foodsoft_*.sql
